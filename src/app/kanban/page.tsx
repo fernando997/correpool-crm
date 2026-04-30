@@ -252,7 +252,7 @@ function ScoreBadge({ score }: { score: number }) {
 }
 
 function LeadCard({
-  lead, users, alertaIds, showVendorTag, onClick, onMoveLeft, onMoveRight,
+  lead, users, alertaIds, showVendorTag, onClick, onMoveLeft, onMoveRight, onScheduleClick,
 }: {
   lead: Lead
   users: ReturnType<typeof useApp>['users']
