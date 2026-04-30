@@ -7,7 +7,7 @@ import { FUNIL_LABELS, FUNIL_ORDER, TEMPERATURA_COLORS, TEMPERATURA_LABELS, type
 import { cn, formatCurrency, formatDuration, scoreBg } from '@/lib/utils'
 import {
   Phone, Calendar, ChevronDown, Plus, Search, X, Tag, GripVertical,
-  Clock, AlertTriangle, DollarSign, CheckCircle, Thermometer, Download,
+  Clock, AlertTriangle, DollarSign, CheckCircle, Thermometer, Download, CalendarClock,
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import AddLeadModal from '@/components/leads/AddLeadModal'
@@ -143,6 +143,103 @@ function ConfirmValorFechadoModal({
   )
 }
 
+function AgendarContatoModal({
+  lead, onConfirm, onCancel,
+}: {
+  lead: Lead
+  onConfirm: (date: string) => void
+  onCancel: () => void
+}) {
+  const todayStr = new Date().toISOString().split('T')[0]
+  const [date, setDate] = useState(lead.proximo_contato || '')
+
+  const quickOptions = [
+    { label: 'Amanhã', days: 1 },
+    { label: '3 dias', days: 3 },
+    { label: '7 dias', days: 7 },
+    { label: '15 dias', days: 15 },
+  ]
+
+  function addDays(d: number) {
+    const dt = new Date()
+    dt.setDate(dt.getDate() + d)
+    return dt.toISOString().split('T')[0]
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="card w-full max-w-sm shadow-2xl">
+        <div className="flex items-center justify-between p-5 border-b border-[#E0E6ED]">
+          <h2 className="text-base font-semibold text-[#1F2D3D] flex items-center gap-2">
+            <CalendarClock size={18} className="text-orange-500" />
+            Agendar Próximo Contato
+          </h2>
+          <button onClick={onCancel} className="text-[#6B7C93] hover:text-[#374151]">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="p-5 space-y-4">
+          <p className="text-sm text-[#6B7C93]">
+            Quando retomar contato com <strong className="text-[#1F2D3D]">{lead.nome}</strong>?
+          </p>
+          <div className="grid grid-cols-4 gap-2">
+            {quickOptions.map(({ label, days }) => {
+              const val = addDays(days)
+              return (
+                <button
+                  key={days}
+                  onClick={() => setDate(val)}
+                  className={cn(
+                    'py-2 rounded-lg text-xs font-medium border transition-all',
+                    date === val
+                      ? 'bg-orange-500/20 border-orange-500/50 text-orange-500'
+                      : 'bg-[#F5F7FA] border-[#E0E6ED] text-[#6B7C93] hover:border-orange-400/40 hover:text-orange-500'
+                  )}
+                >
+                  {label}
+                </button>
+              )
+            })}
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-[#6B7C93] block mb-1.5">Ou escolha a data</label>
+            <input
+              type="date"
+              className="input"
+              value={date}
+              min={todayStr}
+              onChange={(e) => setDate(e.target.value)}
+            />
+          </div>
+          <div className="flex gap-2 pt-1">
+            {lead.proximo_contato && (
+              <button
+                onClick={() => onConfirm('')}
+                className="px-3 py-2 rounded-lg text-xs text-red-400 hover:bg-red-400/10 transition-colors border border-red-400/20"
+              >
+                Remover
+              </button>
+            )}
+            <button onClick={onCancel} className="btn-secondary flex-1 text-sm">Cancelar</button>
+            <button
+              onClick={() => date && onConfirm(date)}
+              disabled={!date}
+              className={cn(
+                'flex-1 text-sm px-4 py-2 rounded-lg font-semibold transition-colors',
+                date
+                  ? 'bg-orange-500 hover:bg-orange-600 text-white'
+                  : 'bg-[#E0E6ED] text-[#A0AEC0] cursor-not-allowed'
+              )}
+            >
+              Confirmar
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // Cores únicas por vendedor (índice estável na lista de vendedores)
 const VENDOR_PALETTE = ['#2563eb', '#059669', '#d97706', '#7c3aed', '#dc2626', '#0ea5e9', '#ec4899', '#14b8a6']
 
@@ -164,11 +261,18 @@ function LeadCard({
   onClick: () => void
   onMoveLeft?: () => void
   onMoveRight?: () => void
+  onScheduleClick?: () => void
 }) {
   const vendedor = users.find((u) => u.id === lead.vendedor_id)
   const tempColor = TEMPERATURA_COLORS[lead.temperatura]
   const hasAlerta = alertaIds.has(lead.id)
   const score = lead.score_lead ?? 0
+  const todayStr = new Date().toISOString().split('T')[0]
+  const pc = lead.proximo_contato
+  const pcIsToday = pc === todayStr
+  const pcIsPast = !!(pc && pc < todayStr)
+  const FOLLOWUP_STAGES: StatusFunil[] = ['primeiro_contato', 'followup1', 'followup2', 'followup3']
+  const isFollowupStage = FOLLOWUP_STAGES.includes(lead.status_funil)
 
   // Cor estável por vendedor
   const vendedores = users.filter((u) => u.tipo === 'vendedor')
@@ -179,7 +283,9 @@ function LeadCard({
     <div
       className={cn(
         'card p-3 cursor-pointer hover:border-indigo-500/40 hover:bg-[#EEF1F5] transition-all group fade-in',
-        hasAlerta && 'border-amber-500/30'
+        hasAlerta && 'border-amber-500/30',
+        pcIsToday && 'ring-2 ring-orange-400/60',
+        pcIsPast && 'ring-2 ring-red-500/40',
       )}
       onClick={onClick}
       style={{ borderLeftColor: tempColor, borderLeftWidth: 3 }}
@@ -247,6 +353,15 @@ function LeadCard({
             <span>1° resp: {formatDuration(lead.tempo_resposta_segundos)}</span>
           </div>
         )}
+        {pc && (
+          <div className={cn(
+            'flex items-center gap-1 text-[10px] font-semibold mt-0.5',
+            pcIsToday ? 'text-orange-500' : pcIsPast ? 'text-red-400' : 'text-[#6B7C93]'
+          )}>
+            <CalendarClock size={9} />
+            {pcIsToday ? 'Contatar Hoje' : pcIsPast ? `Atrasado: ${pc.split('-').reverse().join('/')}` : pc.split('-').reverse().join('/')}
+          </div>
+        )}
       </div>
 
       {/* Rodapé: avatar + quick actions */}
@@ -260,23 +375,39 @@ function LeadCard({
           </div>
           <span className="text-[10px] text-[#A0AEC0]">{vendedor?.nome.split(' ')[0]}</span>
         </div>
-        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-          {onMoveLeft && (
+        <div className="flex items-center gap-1">
+          {isFollowupStage && onScheduleClick && (
             <button
-              onClick={(e) => { e.stopPropagation(); onMoveLeft() }}
-              className="w-5 h-5 rounded bg-[#D1D9E6] hover:bg-indigo-600/30 flex items-center justify-center text-[#6B7C93] hover:text-indigo-400 transition-colors"
+              onClick={(e) => { e.stopPropagation(); onScheduleClick() }}
+              className={cn(
+                'w-5 h-5 rounded flex items-center justify-center transition-colors',
+                pc
+                  ? 'bg-orange-400/20 text-orange-500'
+                  : 'opacity-0 group-hover:opacity-100 bg-[#D1D9E6] text-[#6B7C93] hover:bg-orange-400/20 hover:text-orange-500'
+              )}
+              title="Agendar próximo contato"
             >
-              <ChevronDown size={11} className="rotate-90" />
+              <CalendarClock size={11} />
             </button>
           )}
-          {onMoveRight && (
-            <button
-              onClick={(e) => { e.stopPropagation(); onMoveRight() }}
-              className="w-5 h-5 rounded bg-[#D1D9E6] hover:bg-emerald-600/30 flex items-center justify-center text-[#6B7C93] hover:text-emerald-400 transition-colors"
-            >
-              <ChevronDown size={11} className="-rotate-90" />
-            </button>
-          )}
+          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            {onMoveLeft && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onMoveLeft() }}
+                className="w-5 h-5 rounded bg-[#D1D9E6] hover:bg-indigo-600/30 flex items-center justify-center text-[#6B7C93] hover:text-indigo-400 transition-colors"
+              >
+                <ChevronDown size={11} className="rotate-90" />
+              </button>
+            )}
+            {onMoveRight && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onMoveRight() }}
+                className="w-5 h-5 rounded bg-[#D1D9E6] hover:bg-emerald-600/30 flex items-center justify-center text-[#6B7C93] hover:text-emerald-400 transition-colors"
+              >
+                <ChevronDown size={11} className="-rotate-90" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -293,7 +424,7 @@ const COL_COLORS: Partial<Record<StatusFunil, string>> = {
 }
 
 export default function KanbanPage() {
-  const { leads, moveLead, users, currentUser, alertas } = useApp()
+  const { leads, moveLead, updateLead, users, currentUser, alertas } = useApp()
   const router = useRouter()
   const [showModal, setShowModal] = useState(false)
   const [search, setSearch] = useState('')
@@ -303,6 +434,7 @@ export default function KanbanPage() {
   const [dragOverCol, setDragOverCol] = useState<StatusFunil | null>(null)
   const [pendingReuniaoLead, setPendingReuniaoLead] = useState<Lead | null>(null)
   const [pendingFechadoLead, setPendingFechadoLead] = useState<Lead | null>(null)
+  const [schedulingLead, setSchedulingLead] = useState<Lead | null>(null)
 
   // IDs de leads com alertas ativos
   const alertaLeadIds = new Set(
@@ -615,6 +747,7 @@ export default function KanbanPage() {
                           onClick={() => router.push(`/leads/${lead.id}`)}
                           onMoveLeft={colIdx > 0 ? () => handleMoveLeft(lead) : undefined}
                           onMoveRight={colIdx < FUNIL_ORDER.length - 2 ? () => handleMoveRight(lead) : undefined}
+                          onScheduleClick={() => setSchedulingLead(lead)}
                         />
                       </div>
                     ))}
@@ -631,6 +764,16 @@ export default function KanbanPage() {
         </div>
       </div>
 
+      {schedulingLead && (
+        <AgendarContatoModal
+          lead={schedulingLead}
+          onConfirm={(date) => {
+            updateLead(schedulingLead.id, { proximo_contato: date || undefined })
+            setSchedulingLead(null)
+          }}
+          onCancel={() => setSchedulingLead(null)}
+        />
+      )}
       {showModal && <AddLeadModal onClose={() => setShowModal(false)} />}
       {pendingReuniaoLead && (
         <ConfirmTempModal

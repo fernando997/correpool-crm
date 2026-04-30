@@ -82,6 +82,7 @@ export interface Lead {
   motivo_perda?: MotivoPerdaType
   score_lead?: number
   ultima_interacao_em?: string
+  proximo_contato?: string   // data agendada para o próximo follow-up (YYYY-MM-DD)
 }
 
 export interface Anotacao {
