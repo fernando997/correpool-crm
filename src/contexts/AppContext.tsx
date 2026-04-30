@@ -73,21 +73,63 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Carga inicial — verifica DB, restaura sessão e carrega dados
   useEffect(() => {
     async function loadData() {
-      const [
-        { data: usersData, error: usersError },
-        { data: leadsData },
-        { data: anotacoesData },
-        { data: historicoData },
-        { data: alertasData },
-        { data: metasData },
-      ] = await Promise.all([
-        supabase.from('users').select('id, nome, email, tipo, vendedor_vinculado, ativo'),
-        supabase.from('leads').select('*'),
-        supabase.from('anotacoes').select('*'),
-        supabase.from('historico_movimentacoes').select('*'),
-        supabase.from('alertas').select('*'),
-        supabase.from('metas').select('*'),
-      ])
+      // Sem env vars → cai direto no mock
+      if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+        const saved = localStorage.getItem('crm_user')
+        if (saved) setCurrentUser(JSON.parse(saved))
+        setUsers(MOCK_USERS)
+        setLeads(enrichLeads(MOCK_LEADS))
+        setAnotacoes(MOCK_ANOTACOES)
+        setHistorico(MOCK_HISTORICO)
+        setAlertas(MOCK_ALERTAS_ESTATICOS)
+        setMetas([{
+          id: 'meta_demo', titulo: 'Meta de Abril 2024', mes: '2024-04',
+          meta_receita: 200000, premio_1_descricao: 'Viagem para o Caribe', premio_1_valor: 5000,
+          premio_2_descricao: 'Bônus em dinheiro', premio_2_valor: 3000, minimo_participar: 70000,
+          criterios: 'Apenas contratos fechados no período de 01/04 a 30/04.',
+          ativa: true, created_at: '2024-04-01T00:00:00',
+        }])
+        setLoading(false)
+        return
+      }
+
+      let usersData = null, usersError = null
+      let leadsData = null, anotacoesData = null, historicoData = null, alertasData = null, metasData = null
+
+      try {
+        const results = await Promise.all([
+          supabase.from('users').select('id, nome, email, tipo, vendedor_vinculado, ativo'),
+          supabase.from('leads').select('*'),
+          supabase.from('anotacoes').select('*'),
+          supabase.from('historico_movimentacoes').select('*'),
+          supabase.from('alertas').select('*'),
+          supabase.from('metas').select('*'),
+        ])
+        ;({ data: usersData, error: usersError } = results[0])
+        ;({ data: leadsData } = results[1])
+        ;({ data: anotacoesData } = results[2])
+        ;({ data: historicoData } = results[3])
+        ;({ data: alertasData } = results[4])
+        ;({ data: metasData } = results[5])
+      } catch (err) {
+        console.error('[loadData] Supabase error — fallback to mock:', err)
+        const saved = localStorage.getItem('crm_user')
+        if (saved) setCurrentUser(JSON.parse(saved))
+        setUsers(MOCK_USERS)
+        setLeads(enrichLeads(MOCK_LEADS))
+        setAnotacoes(MOCK_ANOTACOES)
+        setHistorico(MOCK_HISTORICO)
+        setAlertas(MOCK_ALERTAS_ESTATICOS)
+        setMetas([{
+          id: 'meta_demo', titulo: 'Meta de Abril 2024', mes: '2024-04',
+          meta_receita: 200000, premio_1_descricao: 'Viagem para o Caribe', premio_1_valor: 5000,
+          premio_2_descricao: 'Bônus em dinheiro', premio_2_valor: 3000, minimo_participar: 70000,
+          criterios: 'Apenas contratos fechados no período de 01/04 a 30/04.',
+          ativa: true, created_at: '2024-04-01T00:00:00',
+        }])
+        setLoading(false)
+        return
+      }
 
       const tabelasExistem = !usersError && usersData !== null
 
