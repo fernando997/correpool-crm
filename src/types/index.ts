@@ -47,6 +47,8 @@ export interface User {
   avatar?: string
   vendedorVinculado?: string
   ativo?: boolean
+  google_refresh_token?: string
+  google_email?: string
 }
 
 export interface Lead {

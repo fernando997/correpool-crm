@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import {
   LayoutDashboard, TrendingUp, Kanban, Users, Calendar,
   LogOut, Zap, ChevronRight, Code2, Trophy, Database, BarChart2,
-  PanelLeftClose, PanelLeftOpen,
+  PanelLeftClose, PanelLeftOpen, UserCircle,
 } from 'lucide-react'
 import Image from 'next/image'
 import { useApp } from '@/contexts/AppContext'
@@ -21,6 +21,7 @@ const NAV = [
   { href: '/usuarios',  label: 'Usuários',   icon: Users,    adminOnly: true },
   { href: '/api-docs',  label: 'API',        icon: Code2,    adminOnly: true },
   { href: '/dados',     label: 'Dados',      icon: Database, adminOnly: true },
+  { href: '/perfil',    label: 'Meu Perfil', icon: UserCircle },
 ]
 
 // Itens visíveis por perfil

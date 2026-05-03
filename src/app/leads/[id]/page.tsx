@@ -1,9 +1,18 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, Suspense } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import AppShell from '@/components/layout/AppShell'
 import { useApp } from '@/contexts/AppContext'
+import GoogleCalendarConnect from '@/components/GoogleCalendarConnect'
+
+function GoogleCalendarConnectCompact() {
+  return (
+    <Suspense>
+      <GoogleCalendarConnect compact />
+    </Suspense>
+  )
+}
 import {
   FUNIL_LABELS, FUNIL_ORDER, TEMPERATURA_LABELS, TEMPERATURA_COLORS,
   MOTIVO_PERDA_LABELS,
@@ -249,10 +258,40 @@ function LeadDetailContent({ lead }: { lead: Lead }) {
 
   const handleSaveEdit = () => { updateLead(lead.id, editForm); setEditing(false) }
 
-  const handleSchedule = () => {
+  const handleSchedule = async () => {
     if (!scheduleForm.data) return
-    updateLead(lead.id, { reuniao_agendada: true, data_reuniao: scheduleForm.data, hora_reuniao: scheduleForm.hora, link_meet: scheduleForm.link })
+    updateLead(lead.id, {
+      reuniao_agendada: true,
+      data_reuniao: scheduleForm.data,
+      hora_reuniao: scheduleForm.hora,
+      link_meet: scheduleForm.link || undefined,
+    })
     moveLead(lead.id, 'agendado')
+
+    // Google Calendar integration
+    if (currentUser?.google_refresh_token) {
+      try {
+        const res = await fetch('/api/google/calendar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user_id: currentUser.id,
+            lead_id: lead.id,
+            lead_nome: lead.nome,
+            lead_email: lead.email,
+            data_reuniao: scheduleForm.data,
+            hora_reuniao: scheduleForm.hora || '09:00',
+          }),
+        })
+        const { meetLink } = await res.json()
+        if (meetLink) {
+          updateLead(lead.id, { link_meet: meetLink })
+        }
+      } catch {
+        // falha silenciosa — reunião já salva no CRM
+      }
+    }
+
     setShowSchedule(false)
     setScheduleForm({ data: '', hora: '', link: '' })
   }
@@ -727,6 +766,7 @@ function LeadDetailContent({ lead }: { lead: Lead }) {
                       value={scheduleForm.link}
                       onChange={(e) => setScheduleForm({ ...scheduleForm, link: e.target.value })} />
                   </div>
+                  <GoogleCalendarConnectCompact />
                   <div className="flex gap-2">
                     <button onClick={() => setShowSchedule(false)} className="btn-secondary flex-1 text-xs">Cancelar</button>
                     <button onClick={handleSchedule} className="btn-success flex-1 text-xs">Confirmar</button>

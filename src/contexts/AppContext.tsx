@@ -35,6 +35,8 @@ interface AppContextType {
   currentUser: User | null
   login: (email: string, senha: string) => Promise<string | null> // retorna tipo do user ou null
   logout: () => void
+  googleConnected: boolean
+  refreshGoogleConnection: () => Promise<void>
   leads: Lead[]
   updateLead: (id: string, updates: Partial<Lead>) => void
   moveLead: (id: string, newStatus: StatusFunil, extra?: Partial<Lead>) => void
@@ -101,7 +103,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       try {
         const results = await Promise.all([
-          supabase.from('users').select('id, nome, email, tipo, vendedor_vinculado, ativo'),
+          supabase.from('users').select('id, nome, email, tipo, vendedor_vinculado, ativo, google_refresh_token, google_email'),
           supabase.from('leads').select('*'),
           supabase.from('anotacoes').select('*'),
           supabase.from('historico_movimentacoes').select('*'),
@@ -174,6 +176,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         tipo: u.tipo as User['tipo'],
         vendedorVinculado: (u.vendedor_vinculado as string) ?? undefined,
         ativo: u.ativo !== false,
+        google_refresh_token: (u.google_refresh_token as string) ?? undefined,
+        google_email: (u.google_email as string) ?? undefined,
       }))
       setUsers(mappedUsers)
 
@@ -313,7 +317,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const login = useCallback(async (email: string, senha: string): Promise<string | null> => {
     const { data, error } = await supabase
       .from('users')
-      .select('id, nome, email, tipo, vendedor_vinculado, ativo')
+      .select('id, nome, email, tipo, vendedor_vinculado, ativo, google_refresh_token, google_email')
       .eq('email', email)
       .eq('senha', senha)
       .maybeSingle()
@@ -341,11 +345,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       tipo: data.tipo,
       vendedorVinculado: data.vendedor_vinculado ?? undefined,
       ativo: data.ativo !== false,
+      google_refresh_token: (data as Record<string, unknown>).google_refresh_token as string | undefined,
+      google_email: (data as Record<string, unknown>).google_email as string | undefined,
     }
     setCurrentUser(user)
     localStorage.setItem('crm_user', JSON.stringify(user))
     return user.tipo
   }, [dbReady])
+
+  const refreshGoogleConnection = useCallback(async () => {
+    if (!currentUser) return
+    const { data } = await supabase
+      .from('users')
+      .select('id, nome, email, tipo, vendedor_vinculado, ativo, google_refresh_token, google_email')
+      .eq('id', currentUser.id)
+      .maybeSingle()
+    if (!data) return
+    const updated: User = {
+      ...currentUser,
+      google_refresh_token: (data as Record<string, unknown>).google_refresh_token as string | undefined,
+      google_email: (data as Record<string, unknown>).google_email as string | undefined,
+    }
+    setCurrentUser(updated)
+    localStorage.setItem('crm_user', JSON.stringify(updated))
+  }, [currentUser])
 
   const logout = useCallback(() => {
     setCurrentUser(null)
@@ -616,10 +639,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
+  const googleConnected = !!currentUser?.google_refresh_token
+
   return (
     <AppContext.Provider
       value={{
         currentUser, login, logout,
+        googleConnected, refreshGoogleConnection,
         leads, updateLead, moveLead, addLead, deleteLead,
         anotacoes, addAnotacao,
         historico,
