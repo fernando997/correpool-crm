@@ -15,7 +15,9 @@ import {
   CheckCircle, Settings2, Calendar, ArrowUpRight, X, GitCompare,
 } from 'lucide-react'
 import {
-  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  BarChart, Bar, LineChart, Line, AreaChart, Area,
+  PieChart, Pie, RadarChart, Radar, PolarGrid, PolarAngleAxis,
+  XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell, Legend,
 } from 'recharts'
 import type { Lead } from '@/types'
@@ -170,6 +172,26 @@ function calcCriativoEvolution(leads: Lead[], criativo: string) {
     }))
 }
 
+function calcCriativoDailyLeads(leads: Lead[], criativo: string) {
+  const crLeads = leads.filter((l) => l.utm_content === criativo)
+  const map: Record<string, { leads: number; agendou: number; vendas: number }> = {}
+  for (const l of crLeads) {
+    const k = l.data_criacao.slice(0, 10)
+    if (!map[k]) map[k] = { leads: 0, agendou: 0, vendas: 0 }
+    map[k].leads++
+    if (RESPONDEU_EV.includes(l.status_funil)) map[k].agendou++
+    if (l.status_funil === 'fechado') map[k].vendas++
+  }
+  return Object.entries(map)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([data, d]) => ({
+      data: data.slice(5).replace('-', '/'),
+      Leads: d.leads,
+      Agendamentos: d.agendou,
+      Vendas: d.vendas,
+    }))
+}
+
 // ── Criativo Drawer ──────────────────────────────────────────────────────────
 const DRAWER_STATUS_LABELS: Record<string, string> = {
   trafego_pago: 'Tráfego', primeiro_contato: '1o Contato', followup1: 'Follow-up 1',
@@ -225,12 +247,32 @@ function CriativoDrawer({ criativo, leads, users, onClose }: {
     .map((t) => ({ t, label: DRAWER_TEMP_LABELS[t], count: crLeads.filter((l) => l.temperatura === t).length, color: DRAWER_TEMP_COLORS[t] }))
     .filter((d) => d.count > 0)
 
-  const evData = calcCriativoEvolution(leads, criativo)
+  const evData    = calcCriativoEvolution(leads, criativo)
+  const dailyData = calcCriativoDailyLeads(leads, criativo)
 
   const campanha = crLeads[0]?.utm_campaign || ''
   const fonte    = crLeads[0]?.utm_source || ''
 
   const getName = (id: string) => users.find((u) => u.id === id)?.nome?.split(' ')[0] || '—'
+
+  // Leads por vendedor (pizza)
+  const vendedorMap: Record<string, number> = {}
+  for (const l of crLeads) {
+    const nome = getName(l.vendedor_id)
+    vendedorMap[nome] = (vendedorMap[nome] || 0) + 1
+  }
+  const vendedorData = Object.entries(vendedorMap)
+    .map(([name, value]) => ({ name, value }))
+    .sort((a, b) => b.value - a.value)
+
+  // Radar de performance
+  const radarData = [
+    { metric: 'Resposta',     valor: parseFloat(taxaAgend.toFixed(1)) },
+    { metric: 'Agendamento',  valor: parseFloat(taxaAgend.toFixed(1)) },
+    { metric: 'Conversão',    valor: parseFloat(taxaConv.toFixed(1)) },
+    { metric: 'Desqual.',     valor: totalLeads > 0 ? parseFloat(((declinados / totalLeads) * 100).toFixed(1)) : 0 },
+    { metric: 'Pipeline',     valor: pipeline > 0 ? Math.min(100, parseFloat((pipeline / 5000).toFixed(1))) : 0 },
+  ]
 
   const kpis = [
     { label: 'Total Leads',    value: totalLeads,  fmt: (v: number) => String(v),           color: BLUE_L,  icon: Users      },
@@ -335,22 +377,100 @@ function CriativoDrawer({ criativo, leads, users, onClose }: {
             </div>
           </div>
 
-          {/* Funil + evolution side by side */}
-          <div className="grid grid-cols-2 gap-4">
+          {/* ── Área chart diária (onda) ─────────────────────────────────── */}
+          <div className="rounded-xl p-5" style={{ background: '#FFFFFF', border: '1px solid #E0E6ED' }}>
+            <div className="flex items-center justify-between mb-4">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-[#A0AEC0]">Entradas Diárias de Leads</p>
+              <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full"
+                style={{ background: `${BLUE_L}15`, color: BLUE_L }}>{dailyData.length} dias</span>
+            </div>
+            {dailyData.length > 0 ? (
+              <ResponsiveContainer width="100%" height={180}>
+                <AreaChart data={dailyData} margin={{ left: -20, right: 4, top: 4 }}>
+                  <defs>
+                    <linearGradient id="gradLeads" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%"  stopColor={BLUE_L}  stopOpacity={0.25} />
+                      <stop offset="95%" stopColor={BLUE_L}  stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="gradAgend" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%"  stopColor={AMBER}   stopOpacity={0.2} />
+                      <stop offset="95%" stopColor={AMBER}   stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="gradVendas" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%"  stopColor={GREEN_L} stopOpacity={0.3} />
+                      <stop offset="95%" stopColor={GREEN_L} stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E0E6ED" vertical={false} />
+                  <XAxis dataKey="data" tick={{ fill: '#A0AEC0', fontSize: 9 }} axisLine={false} tickLine={false}
+                    interval={Math.max(0, Math.floor(dailyData.length / 8) - 1)} />
+                  <YAxis tick={{ fill: '#A0AEC0', fontSize: 9 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                  <Tooltip content={<ChartTooltip />} />
+                  <Legend wrapperStyle={{ fontSize: 9, color: '#A0AEC0' }} />
+                  <Area type="monotone" dataKey="Leads"        stroke={BLUE_L}  strokeWidth={2} fill="url(#gradLeads)"  dot={false} />
+                  <Area type="monotone" dataKey="Agendamentos" stroke={AMBER}   strokeWidth={2} fill="url(#gradAgend)"  dot={false} />
+                  <Area type="monotone" dataKey="Vendas"       stroke={GREEN_L} strokeWidth={2} fill="url(#gradVendas)" dot={false} />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex items-center justify-center h-[180px] text-[#A0AEC0] text-sm">Sem dados suficientes</div>
+            )}
+          </div>
+
+          {/* ── Pizza vendedor + Funil + Radar ───────────────────────────── */}
+          <div className="grid grid-cols-3 gap-4">
+
+            {/* Pizza: leads por vendedor */}
+            <div className="rounded-xl p-5" style={{ background: '#FFFFFF', border: '1px solid #E0E6ED' }}>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-[#A0AEC0] mb-3">Leads por Vendedor</p>
+              {vendedorData.length > 0 ? (
+                <>
+                  <ResponsiveContainer width="100%" height={140}>
+                    <PieChart>
+                      <Pie data={vendedorData} dataKey="value" nameKey="name"
+                        cx="50%" cy="50%" innerRadius={38} outerRadius={62}
+                        paddingAngle={3} strokeWidth={0}>
+                        {vendedorData.map((_, i) => (
+                          <Cell key={i} fill={CHART_PALETTE[i % CHART_PALETTE.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        formatter={(v: number, name: string) => [`${v} leads`, name]}
+                        contentStyle={{ background: '#1F2D3D', border: 'none', borderRadius: 8, fontSize: 11, color: '#fff' }}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="space-y-1 mt-2">
+                    {vendedorData.map((v, i) => (
+                      <div key={v.name} className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full flex-shrink-0"
+                            style={{ background: CHART_PALETTE[i % CHART_PALETTE.length] }} />
+                          <span className="text-[10px] text-[#6B7C93] truncate max-w-[80px]">{v.name}</span>
+                        </div>
+                        <span className="text-[10px] font-bold text-[#1F2D3D]">{v.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div className="flex items-center justify-center h-[140px] text-[#A0AEC0] text-xs">Sem dados</div>
+              )}
+            </div>
 
             {/* Funil distribution */}
             <div className="rounded-xl p-5" style={{ background: '#FFFFFF', border: '1px solid #E0E6ED' }}>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-[#A0AEC0] mb-4">Distribuição no Funil</p>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-[#A0AEC0] mb-3">Distribuição no Funil</p>
               <div className="space-y-2">
                 {funilData.map((d) => (
                   <div key={d.s} className="flex items-center gap-2">
-                    <span className="text-[10px] font-medium text-[#6B7C93] w-24 flex-shrink-0 text-right truncate">{d.label}</span>
-                    <div className="flex-1 h-5 rounded-md relative overflow-hidden" style={{ background: '#F5F7FA' }}>
+                    <span className="text-[9px] font-medium text-[#6B7C93] w-20 flex-shrink-0 text-right truncate">{d.label}</span>
+                    <div className="flex-1 h-4 rounded-md relative overflow-hidden" style={{ background: '#F5F7FA' }}>
                       <div className="h-full rounded-md"
                         style={{ width: `${(d.count / maxFunil) * 100}%`, background: `${d.color}25`, borderLeft: `3px solid ${d.color}` }} />
-                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold" style={{ color: d.color }}>{d.count}</span>
+                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[9px] font-bold" style={{ color: d.color }}>{d.count}</span>
                     </div>
-                    <span className="text-[10px] font-semibold w-7 text-right flex-shrink-0" style={{ color: '#A0AEC0' }}>
+                    <span className="text-[9px] font-semibold w-6 text-right flex-shrink-0" style={{ color: '#A0AEC0' }}>
                       {((d.count / totalLeads) * 100).toFixed(0)}%
                     </span>
                   </div>
@@ -358,26 +478,43 @@ function CriativoDrawer({ criativo, leads, users, onClose }: {
               </div>
             </div>
 
-            {/* Weekly evolution */}
+            {/* Radar: performance */}
             <div className="rounded-xl p-5" style={{ background: '#FFFFFF', border: '1px solid #E0E6ED' }}>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-[#A0AEC0] mb-4">Evolução Semanal</p>
-              {evData.length > 0 ? (
-                <ResponsiveContainer width="100%" height={180}>
-                  <LineChart data={evData} margin={{ left: -20, right: 4 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#E0E6ED" vertical={false} />
-                    <XAxis dataKey="semana" tick={{ fill: '#A0AEC0', fontSize: 9 }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fill: '#A0AEC0', fontSize: 9 }} axisLine={false} tickLine={false} />
-                    <Tooltip content={<ChartTooltip />} />
-                    <Legend wrapperStyle={{ fontSize: 9, color: '#A0AEC0' }} />
-                    <Line type="monotone" dataKey="Leads"        stroke={BLUE_L}  strokeWidth={2} dot={{ r: 2 }} />
-                    <Line type="monotone" dataKey="Agendamentos" stroke={AMBER}   strokeWidth={2} dot={{ r: 2 }} />
-                    <Line type="monotone" dataKey="Vendas"       stroke={GREEN_L} strokeWidth={2} dot={{ r: 2 }} />
-                  </LineChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="flex items-center justify-center h-[180px] text-[#A0AEC0] text-sm">Sem dados suficientes</div>
-              )}
+              <p className="text-[10px] font-bold uppercase tracking-widest text-[#A0AEC0] mb-3">Performance (%)</p>
+              <ResponsiveContainer width="100%" height={200}>
+                <RadarChart data={radarData} margin={{ top: 8, right: 16, bottom: 8, left: 16 }}>
+                  <PolarGrid stroke="#E0E6ED" />
+                  <PolarAngleAxis dataKey="metric" tick={{ fill: '#6B7C93', fontSize: 9, fontWeight: 600 }} />
+                  <Radar name="Criativo" dataKey="valor" stroke={VIOLET}
+                    fill={VIOLET} fillOpacity={0.18} strokeWidth={2} dot={{ r: 3, fill: VIOLET }} />
+                  <Tooltip
+                    formatter={(v: number) => [`${v}%`]}
+                    contentStyle={{ background: '#1F2D3D', border: 'none', borderRadius: 8, fontSize: 11, color: '#fff' }}
+                  />
+                </RadarChart>
+              </ResponsiveContainer>
             </div>
+          </div>
+
+          {/* ── Evolução Semanal (linha) ──────────────────────────────────── */}
+          <div className="rounded-xl p-5" style={{ background: '#FFFFFF', border: '1px solid #E0E6ED' }}>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-[#A0AEC0] mb-4">Evolução Semanal</p>
+            {evData.length > 0 ? (
+              <ResponsiveContainer width="100%" height={160}>
+                <LineChart data={evData} margin={{ left: -20, right: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E0E6ED" vertical={false} />
+                  <XAxis dataKey="semana" tick={{ fill: '#A0AEC0', fontSize: 9 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: '#A0AEC0', fontSize: 9 }} axisLine={false} tickLine={false} />
+                  <Tooltip content={<ChartTooltip />} />
+                  <Legend wrapperStyle={{ fontSize: 9, color: '#A0AEC0' }} />
+                  <Line type="monotone" dataKey="Leads"        stroke={BLUE_L}  strokeWidth={2} dot={{ r: 2 }} />
+                  <Line type="monotone" dataKey="Agendamentos" stroke={AMBER}   strokeWidth={2} dot={{ r: 2 }} />
+                  <Line type="monotone" dataKey="Vendas"       stroke={GREEN_L} strokeWidth={2} dot={{ r: 2 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex items-center justify-center h-[160px] text-[#A0AEC0] text-sm">Sem dados suficientes</div>
+            )}
           </div>
 
           {/* Leads table */}
