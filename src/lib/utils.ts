@@ -95,9 +95,10 @@ export function scoreBg(score: number): string {
 
 // ─── MÉTRICAS POR CRIATIVO ────────────────────────────────────────────────────
 export function calcMetricasPorCriativo(leads: Lead[]): MetricaCriativo[] {
+  const organicos = leads.filter((l) => !l.importado_externo)
   const grouped: Record<string, Lead[]> = {}
 
-  for (const lead of leads) {
+  for (const lead of organicos) {
     const key = lead.utm_content || 'sem_criativo'
     if (!grouped[key]) grouped[key] = []
     grouped[key].push(lead)
@@ -164,21 +165,25 @@ export function calcMetricasPorCriativo(leads: Lead[]): MetricaCriativo[] {
 
 // ─── MÉTRICAS GERAIS DO FUNIL ─────────────────────────────────────────────────
 export function calcFunnelMetrics(leads: Lead[]) {
-  const total = leads.length
-  const respondeu = leads.filter((l) => RESPONDEU_STAGES.includes(l.status_funil)).length
-  const agendados = leads.filter((l) =>
+  // Leads orgânicos excluem importados externos — usados para contagens e taxas
+  const organicos = leads.filter((l) => !l.importado_externo)
+
+  const total = organicos.length
+  const respondeu = organicos.filter((l) => RESPONDEU_STAGES.includes(l.status_funil)).length
+  const agendados = organicos.filter((l) =>
     ['agendado', 'reuniao_realizada', 'contrato_enviado', 'contrato_assinado', 'fechado'].includes(l.status_funil)
   ).length
+  // Reuniões e fechamentos contam de TODOS (incluindo importados)
   const reunioes = leads.filter((l) =>
     ['reuniao_realizada', 'contrato_enviado', 'contrato_assinado', 'fechado'].includes(l.status_funil)
   ).length
   const fechados = leads.filter((l) => l.status_funil === 'fechado').length
-  const declinados = leads.filter((l) => l.status_funil === 'declinado').length
+  const declinados = organicos.filter((l) => l.status_funil === 'declinado').length
   const receitaTotal = leads
     .filter((l) => l.status_funil === 'fechado')
     .reduce((s, l) => s + (l.valor_fechado ?? l.valor_contrato ?? 0), 0)
   const ticketMedio = fechados > 0 ? receitaTotal / fechados : 0
-  const pipelineTotal = leads
+  const pipelineTotal = organicos
     .filter((l) => !['fechado', 'declinado'].includes(l.status_funil))
     .reduce((s, l) => s + (l.valor_contrato ?? 0), 0)
 
@@ -273,8 +278,9 @@ export function calcReceitaPorDimensao(
   leads: Lead[],
   campo: 'utm_content' | 'utm_campaign' | 'utm_source'
 ) {
+  const organicos = leads.filter((l) => !l.importado_externo)
   const mapa: Record<string, { receita: number; leads: number; vendas: number }> = {}
-  for (const l of leads) {
+  for (const l of organicos) {
     const key = (l[campo] as string) || 'Desconhecido'
     if (!mapa[key]) mapa[key] = { receita: 0, leads: 0, vendas: 0 }
     mapa[key].leads++
@@ -290,8 +296,9 @@ export function calcReceitaPorDimensao(
 
 // ─── MÉTRICAS POR CAMPANHA ────────────────────────────────────────────────────
 export function calcMetricasPorCampanha(leads: Lead[]) {
+  const organicos = leads.filter((l) => !l.importado_externo)
   const grouped: Record<string, Lead[]> = {}
-  for (const lead of leads) {
+  for (const lead of organicos) {
     const key = lead.utm_campaign || 'sem_campanha'
     if (!grouped[key]) grouped[key] = []
     grouped[key].push(lead)

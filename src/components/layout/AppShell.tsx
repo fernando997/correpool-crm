@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import {
   LayoutDashboard, TrendingUp, Kanban, Calendar, Trophy,
-  Users, Code2, Menu, X, LogOut, BellRing, ChevronRight,
+  Users, Code2, Database, Menu, X, LogOut, BellRing, ChevronRight,
   Phone, User, Zap,
 } from 'lucide-react'
 import Image from 'next/image'
@@ -19,8 +19,9 @@ const NAV = [
   { href: '/kanban',    label: 'Kanban',     icon: Kanban },
   { href: '/agenda',    label: 'Agenda',     icon: Calendar },
   { href: '/metas',     label: 'Metas',      icon: Trophy },
-  { href: '/usuarios',  label: 'Usuários',   icon: Users,  adminOnly: true },
-  { href: '/api-docs',  label: 'API',        icon: Code2,  adminOnly: true },
+  { href: '/usuarios',  label: 'Usuários',   icon: Users,    adminOnly: true },
+  { href: '/api-docs',  label: 'API',        icon: Code2,    adminOnly: true },
+  { href: '/dados',     label: 'Dados',      icon: Database, adminOnly: true },
 ]
 
 const ROLE_CONFIG: Record<string, { label: string; dot: string }> = {

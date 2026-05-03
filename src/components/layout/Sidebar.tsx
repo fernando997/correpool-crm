@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import {
   LayoutDashboard, TrendingUp, Kanban, Users, Calendar,
-  LogOut, Zap, ChevronRight, Code2, Trophy,
+  LogOut, Zap, ChevronRight, Code2, Trophy, Database,
   PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react'
 import Image from 'next/image'
@@ -17,8 +17,9 @@ const NAV = [
   { href: '/kanban',    label: 'Kanban',     icon: Kanban },
   { href: '/agenda',    label: 'Agenda',     icon: Calendar },
   { href: '/metas',     label: 'Metas',      icon: Trophy },
-  { href: '/usuarios',  label: 'Usuários',   icon: Users,  adminOnly: true },
-  { href: '/api-docs',  label: 'API',        icon: Code2,  adminOnly: true },
+  { href: '/usuarios',  label: 'Usuários',   icon: Users,    adminOnly: true },
+  { href: '/api-docs',  label: 'API',        icon: Code2,    adminOnly: true },
+  { href: '/dados',     label: 'Dados',      icon: Database, adminOnly: true },
 ]
 
 // Itens visíveis por perfil

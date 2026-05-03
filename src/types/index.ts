@@ -83,6 +83,7 @@ export interface Lead {
   score_lead?: number
   ultima_interacao_em?: string
   proximo_contato?: string   // data agendada para o próximo follow-up (YYYY-MM-DD)
+  importado_externo?: boolean
 }
 
 export interface Anotacao {

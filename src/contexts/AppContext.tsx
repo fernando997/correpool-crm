@@ -54,6 +54,9 @@ interface AppContextType {
   updateMeta: (id: string, updates: Partial<Meta>) => Promise<void>
   deleteMeta: (id: string) => Promise<void>
   loading: boolean
+  downloadBackup: () => Promise<void>
+  restoreFromBackup: (json: Lead[]) => Promise<void>
+  importFromCRM: (importedLeads: Partial<Lead>[], vendedor_id: string) => Promise<void>
 }
 
 const AppContext = createContext<AppContextType | null>(null)
@@ -258,6 +261,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const dynamicAlertas: Alerta[] = []
 
     leads.forEach((lead) => {
+      if (lead.importado_externo) return
       if (['fechado', 'declinado'].includes(lead.status_funil)) return
 
       if (isFollowupAtrasado(lead)) {
@@ -548,6 +552,62 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [dbReady])
 
+  // ── Admin: Backup / Restore / Import CRM ────────────────────────────────────
+  const downloadBackup = useCallback(async () => {
+    const adminKey = process.env.NEXT_PUBLIC_ADMIN_SECRET_KEY
+    const res = await fetch('/api/admin/backup', {
+      headers: { 'x-admin-key': adminKey ?? '' },
+    })
+    if (!res.ok) throw new Error('Backup failed')
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `backup-leads-${new Date().toISOString().split('T')[0]}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  }, [])
+
+  const restoreFromBackup = useCallback(async (restoredLeads: Lead[]) => {
+    const adminKey = process.env.NEXT_PUBLIC_ADMIN_SECRET_KEY
+    const res = await fetch('/api/admin/restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-admin-key': adminKey ?? '' },
+      body: JSON.stringify({ leads: restoredLeads }),
+    })
+    if (!res.ok) {
+      const err = await res.json()
+      throw new Error(err.error ?? 'Restore failed')
+    }
+    // Reload local state
+    setLeads(restoredLeads.map((l) => ({ ...l, score_lead: calcLeadScore(l) })))
+    setAnotacoes([])
+    setHistorico([])
+    setAlertas([])
+  }, [])
+
+  const importFromCRM = useCallback(async (importedLeads: Partial<Lead>[], vendedor_id: string) => {
+    const adminKey = process.env.NEXT_PUBLIC_ADMIN_SECRET_KEY
+    const res = await fetch('/api/admin/import-crm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-admin-key': adminKey ?? '' },
+      body: JSON.stringify({ leads: importedLeads, vendedor_id }),
+    })
+    if (!res.ok) {
+      const err = await res.json()
+      throw new Error(err.error ?? 'Import failed')
+    }
+    // Reload leads from server to get the inserted records
+    const { data } = await supabase.from('leads').select('*')
+    if (data) {
+      setLeads(data.map((l: Record<string, unknown>) => {
+        const lead = l as unknown as Lead
+        lead.score_lead = calcLeadScore(lead)
+        return lead
+      }))
+    }
+  }, [])
+
   // ── Alertas ─────────────────────────────────────────────────────────────────
   const resolveAlerta = useCallback((id: string) => {
     setAlertas((prev) => prev.map((a) => (a.id === id ? { ...a, resolvido: true } : a)))
@@ -567,6 +627,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         alertas, resolveAlerta,
         metas, addMeta, updateMeta, deleteMeta,
         loading,
+        downloadBackup, restoreFromBackup, importFromCRM,
       }}
     >
       {children}
