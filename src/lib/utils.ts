@@ -351,6 +351,73 @@ export function calcMetricasPorCampanha(leads: Lead[]) {
   }).sort((a, b) => b.receita_total - a.receita_total)
 }
 
+// ─── MÉTRICAS POR VENDEDOR ────────────────────────────────────────────────────
+export function calcMetricasPorVendedor(
+  leads: Lead[],
+  users: { id: string; nome: string; tipo: string }[],
+  historico: { lead_id: string; para_status: string; usuario_id: string; data: string }[]
+) {
+  const agora = new Date()
+  const diaSemana = agora.getDay() === 0 ? 6 : agora.getDay() - 1
+  const inicioSemana = new Date(agora)
+  inicioSemana.setDate(agora.getDate() - diaSemana)
+  inicioSemana.setHours(0, 0, 0, 0)
+  const isoSemana = inicioSemana.toISOString()
+
+  return users
+    .filter((u) => u.tipo === 'vendedor')
+    .map((u) => {
+      const vLeads = leads.filter((l) => l.vendedor_id === u.id)
+      const total = vLeads.length
+      const respondeu = vLeads.filter((l) => RESPONDEU_STAGES.includes(l.status_funil)).length
+      const agendados = vLeads.filter((l) =>
+        ['agendado','reuniao_realizada','contrato_enviado','contrato_assinado','fechado'].includes(l.status_funil)
+      ).length
+      const reunioes = vLeads.filter((l) =>
+        ['reuniao_realizada','contrato_enviado','contrato_assinado','fechado'].includes(l.status_funil)
+      ).length
+      const fechados = vLeads.filter((l) => l.status_funil === 'fechado').length
+      const declinados = vLeads.filter((l) => l.status_funil === 'declinado').length
+      const receita = vLeads
+        .filter((l) => l.status_funil === 'fechado')
+        .reduce((s, l) => s + (l.valor_fechado ?? l.valor_contrato ?? 0), 0)
+      const pipeline = vLeads
+        .filter((l) => !['fechado','declinado'].includes(l.status_funil))
+        .reduce((s, l) => s + (l.valor_contrato ?? 0), 0)
+      const scoreMedio = total > 0
+        ? vLeads.reduce((s, l) => s + (l.score_lead ?? 0), 0) / total
+        : 0
+      const leadsParados = vLeads.filter(
+        (l) => !['fechado','declinado'].includes(l.status_funil) && isLeadParado(l)
+      ).length
+      const reunioesSemana = historico.filter(
+        (h) => h.para_status === 'reuniao_realizada' && h.data >= isoSemana &&
+                vLeads.some((l) => l.id === h.lead_id)
+      ).length
+
+      return {
+        id: u.id,
+        nome: u.nome,
+        total,
+        respondeu,
+        agendados,
+        reunioes,
+        reunioesSemana,
+        fechados,
+        declinados,
+        receita,
+        pipeline,
+        ticketMedio: fechados > 0 ? receita / fechados : 0,
+        taxaConversao: total > 0 ? (fechados / total) * 100 : 0,
+        taxaAgendamento: total > 0 ? (agendados / total) * 100 : 0,
+        taxaResposta: total > 0 ? (respondeu / total) * 100 : 0,
+        scoreMedio,
+        leadsParados,
+      }
+    })
+    .sort((a, b) => b.receita - a.receita)
+}
+
 // ─── UTILITÁRIOS ──────────────────────────────────────────────────────────────
 export function leadsPerVendedor(leads: Lead[], userId: string) {
   return leads.filter((l) => l.vendedor_id === userId)
