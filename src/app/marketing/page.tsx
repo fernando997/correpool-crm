@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import React, { useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import AppShell from '@/components/layout/AppShell'
 import { useApp } from '@/contexts/AppContext'
@@ -12,7 +12,7 @@ import {
   Trophy, AlertTriangle, ChevronUp, ChevronDown, Download,
   Star, Zap, Target, TrendingUp, TrendingDown, DollarSign, Users,
   Layers, Filter, BarChart2, Rocket, PauseCircle,
-  CheckCircle, Settings2, Calendar, ArrowUpRight, X, GitCompare,
+  CheckCircle, Settings2, Calendar, ArrowUpRight, X, GitCompare, Flame,
 } from 'lucide-react'
 import {
   BarChart, Bar, LineChart, Line, AreaChart, Area,
@@ -58,7 +58,8 @@ const SOURCE_COLORS: Record<string, string> = {
   linkedin:  '#0a66c2',
 }
 
-type Tab = 'campanhas' | 'criativos' | 'decisao'
+type Tab = 'campanhas' | 'criativos' | 'decisao' | 'calor'
+type HeatMetric = 'leads' | 'agendamentos' | 'vendas'
 type Period = 'todos' | '7d' | '30d' | '90d' | 'custom'
 type SortKey =
   | 'utm_content' | 'total_leads' | 'taxa_resposta' | 'taxa_agendamento'
@@ -620,6 +621,46 @@ function downloadXLS(data: any[], filename: string) {
   URL.revokeObjectURL(url)
 }
 
+// ── Mapa de Calor ─────────────────────────────────────────────────────────────
+const HEAT_DAYS  = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']
+const HEAT_HOURS = Array.from({ length: 24 }, (_, i) => i)
+const AGENDOU_HEAT = ['agendado','reuniao_realizada','contrato_enviado','contrato_assinado','fechado']
+
+function buildHeatMatrix(leads: Lead[], metric: HeatMetric): number[][] {
+  // matrix[dayIdx 0=Seg..6=Dom][hora 0..23]
+  const m: number[][] = Array.from({ length: 7 }, () => Array(24).fill(0))
+  for (const l of leads) {
+    const ts = l.created_at || (l.data_criacao + 'T12:00:00')
+    const d = new Date(ts)
+    if (isNaN(d.getTime())) continue
+    const jsDay = d.getDay() // 0=Dom..6=Sáb
+    const dayIdx = jsDay === 0 ? 6 : jsDay - 1 // 0=Seg..6=Dom
+    const hour = d.getHours()
+    const include =
+      metric === 'leads' ? true :
+      metric === 'agendamentos' ? AGENDOU_HEAT.includes(l.status_funil) :
+      l.status_funil === 'fechado'
+    if (include) m[dayIdx][hour]++
+  }
+  return m
+}
+
+function heatColor(val: number, maxVal: number): string {
+  if (val === 0 || maxVal === 0) return '#F0F4F8'
+  const pct = val / maxVal
+  if (pct <= 0.15) return '#D1FAE5'
+  if (pct <= 0.35) return '#6EE7B7'
+  if (pct <= 0.60) return '#2FBF71'
+  if (pct <= 0.80) return '#1E8E5A'
+  return '#14532D'
+}
+
+function heatTextColor(val: number, maxVal: number): string {
+  if (val === 0 || maxVal === 0) return 'transparent'
+  const pct = val / maxVal
+  return pct >= 0.35 ? '#fff' : '#1F2D3D'
+}
+
 // ── Página Principal ──────────────────────────────────────────────────────────
 export default function MarketingPage() {
   const { leads: allLeads, users, currentUser } = useApp()
@@ -640,6 +681,7 @@ export default function MarketingPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allLeads, currentUser])
   const [tab, setTab]               = useState<Tab>('campanhas')
+  const [heatMetric, setHeatMetric] = useState<HeatMetric>('leads')
   const [period, setPeriod]         = useState<Period>('todos')
   const [dateFrom, setDateFrom]     = useState('')
   const [dateTo, setDateTo]         = useState('')
@@ -651,6 +693,7 @@ export default function MarketingPage() {
   const [sortKey, setSortKey]       = useState<SortKey>('score')
   const [sortDir, setSortDir]       = useState<SortDir>('desc')
   const [selectedCriativo, setSelectedCriativo] = useState<string | null>(null)
+  const [expandedCampanhas, setExpandedCampanhas] = useState<Set<string>>(new Set())
 
   // ── Filtro por período ─────────────────────────────────────────────────────
   const maxDate = useMemo(() => {
@@ -691,6 +734,13 @@ export default function MarketingPage() {
   }, [leads, compareMode, compFrom, compTo, campFiltro, fonteFiltro])
 
   // ── Dados derivados ────────────────────────────────────────────────────────
+  const heatMatrix   = useMemo(() => buildHeatMatrix(filteredLeads, heatMetric), [filteredLeads, heatMetric])
+  const heatMax      = useMemo(() => Math.max(...heatMatrix.flat(), 1), [heatMatrix])
+  const heatColTotals = useMemo(() => HEAT_HOURS.map((h) => heatMatrix.reduce((s, row) => s + row[h], 0)), [heatMatrix])
+  const heatRowTotals = useMemo(() => heatMatrix.map((row) => row.reduce((s, v) => s + v, 0)), [heatMatrix])
+  const peakHour     = useMemo(() => heatColTotals.indexOf(Math.max(...heatColTotals)), [heatColTotals])
+  const peakDay      = useMemo(() => heatRowTotals.indexOf(Math.max(...heatRowTotals)), [heatRowTotals])
+
   const campanhas    = useMemo(() => calcMetricasPorCampanha(filteredLeads), [filteredLeads])
   const criativos    = useMemo(() => calcMetricasPorCriativo(filteredLeads), [filteredLeads])
   const receitaFonte = useMemo(() => calcReceitaPorDimensao(filteredLeads, 'utm_source'), [filteredLeads])
@@ -730,7 +780,17 @@ export default function MarketingPage() {
       return sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va)
     return sortDir === 'asc' ? (va as number) - (vb as number) : (vb as number) - (va as number)
   })
-  const maxScore = Math.max(...criativos.map((m) => m.score), 1)
+  const maxScore     = Math.max(...criativos.map((m) => m.score), 1)
+  const maxScoreCamp = Math.max(...campanhas.map((c) => c.score), 1)
+
+  function toggleCampanha(camp: string) {
+    setExpandedCampanhas((prev) => {
+      const next = new Set(prev)
+      if (next.has(camp)) next.delete(camp)
+      else next.add(camp)
+      return next
+    })
+  }
 
   // ── Download CSVs ──────────────────────────────────────────────────────────
   function exportCampanhas() {
@@ -959,7 +1019,8 @@ export default function MarketingPage() {
           {([
             { id: 'campanhas', label: 'Por Campanha',     icon: BarChart2 },
             { id: 'criativos', label: 'Por Criativo',     icon: Layers },
-            { id: 'decisao',   label: 'Decisão de Investimento', icon: Rocket },
+            { id: 'decisao',   label: 'Decisão',          icon: Rocket },
+            { id: 'calor',     label: 'Mapa de Calor',    icon: Flame },
           ] as { id: Tab; label: string; icon: React.ElementType }[]).map(({ id, label, icon: Icon }) => (
             <button key={id} onClick={() => setTab(id)}
               className={cn('flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all flex-1 justify-center',
@@ -977,86 +1038,318 @@ export default function MarketingPage() {
         {tab === 'campanhas' && (
           <div className="space-y-5">
 
-            {/* Campaign Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {campanhas.map((c, idx) => {
-                const rec = getRecomendacao(c.taxa_conversao, c.ticket_medio, c.taxa_agendamento)
-                const recCfg = REC_CONFIG[rec]
-                const RecIcon = recCfg.icon
-                const color = CHART_PALETTE[idx % CHART_PALETTE.length]
+            {/* ── Destaques ─────────────────────────────────────────────── */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {(() => {
+                const best = [...campanhas].sort((a, b) => b.taxa_conversao - a.taxa_conversao)[0]
+                if (!best) return null
                 return (
-                  <div key={c.campanha} className="card p-5"
-                    style={{ borderLeft: `3px solid ${color}` }}>
-                    <div className="flex items-start justify-between gap-2 mb-4">
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-bold text-text-bright truncate" title={CAMPAIGN_LABELS[c.campanha] || c.campanha}>
-                          {CAMPAIGN_LABELS[c.campanha] || c.campanha}
-                        </p>
-                        <div className="flex items-center gap-2 mt-1 flex-wrap">
-                          {c.fontes.map((f) => (
-                            <span key={f} className="text-[10px] font-semibold px-2 py-0.5 rounded-full capitalize"
-                              style={{ background: `${SOURCE_COLORS[f] || BLUE}20`, color: SOURCE_COLORS[f] || BLUE }}>
-                              {f}
-                            </span>
-                          ))}
-                        </div>
+                  <div className="card p-5" style={{ borderTop: `3px solid ${GREEN_L}` }}>
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: `${GREEN_L}18` }}>
+                        <Trophy size={16} style={{ color: GREEN_L }} />
                       </div>
-                      <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg flex-shrink-0"
-                        style={{ background: recCfg.bg, color: recCfg.color }}>
-                        <RecIcon size={11} />
-                        {recCfg.label}
-                      </span>
+                      <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: GREEN_L }}>Melhor Conversão</p>
                     </div>
-
-                    <div className="grid grid-cols-4 gap-2 mb-4">
-                      {[
-                        { label: 'Leads',   value: String(c.total_leads), color: BLUE_L },
-                        { label: 'Vendas',  value: String(c.vendas),      color: GREEN_L },
-                        { label: 'Conv.',   value: `${c.taxa_conversao.toFixed(0)}%`, color: c.taxa_conversao >= 15 ? GREEN_L : c.taxa_conversao >= 8 ? AMBER : RED },
-                        { label: 'Receita', value: formatCurrency(c.receita_total), color: GREEN_L },
-                      ].map((m) => (
-                        <div key={m.label} className="rounded-lg p-2 text-center" style={{ background: '#F5F7FA', border: '1px solid #E0E6ED' }}>
-                          <p className="text-[10px] text-text-dim">{m.label}</p>
-                          <p className="text-sm font-bold mt-0.5" style={{ color: m.color }}>{m.value}</p>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-text-muted">Taxa de Agendamento</span>
-                        <span className="font-semibold" style={{ color: SKY }}>{c.taxa_agendamento.toFixed(0)}%</span>
-                      </div>
-                      <div className="w-full h-1.5 rounded-full" style={{ background: '#E0E6ED' }}>
-                        <div className="h-1.5 rounded-full" style={{ width: `${Math.min(c.taxa_agendamento, 100)}%`, background: SKY }} />
-                      </div>
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-text-muted">Taxa de Conversão</span>
-                        <span className="font-semibold"
-                          style={{ color: c.taxa_conversao >= 15 ? GREEN_L : c.taxa_conversao >= 8 ? AMBER : RED }}>
-                          {c.taxa_conversao.toFixed(0)}%
-                        </span>
-                      </div>
-                      <div className="w-full h-1.5 rounded-full" style={{ background: '#E0E6ED' }}>
-                        <div className="h-1.5 rounded-full"
-                          style={{
-                            width: `${Math.min(c.taxa_conversao * 3, 100)}%`,
-                            background: c.taxa_conversao >= 15 ? GREEN_L : c.taxa_conversao >= 8 ? AMBER : RED,
-                          }} />
-                      </div>
-                      <div className="flex items-center justify-between text-xs pt-1">
-                        <span className="text-text-dim">Ticket Médio</span>
-                        <span className="font-semibold" style={{ color: SKY }}>
-                          {c.ticket_medio > 0 ? formatCurrency(c.ticket_medio) : '-'}
-                        </span>
-                      </div>
-                    </div>
+                    <p className="text-sm font-bold text-[#1F2D3D] mb-1 truncate">{CAMPAIGN_LABELS[best.campanha] || best.campanha}</p>
+                    <p className="text-2xl font-extrabold" style={{ color: GREEN_L }}>{best.taxa_conversao.toFixed(1)}%</p>
+                    <p className="text-xs text-[#6B7C93] mt-2">{best.vendas} vendas · {best.total_leads} leads · {formatCurrency(best.receita_total)}</p>
                   </div>
                 )
-              })}
+              })()}
+              {(() => {
+                const best = [...campanhas].sort((a, b) => b.total_leads - a.total_leads)[0]
+                if (!best) return null
+                return (
+                  <div className="card p-5" style={{ borderTop: `3px solid ${BLUE_L}` }}>
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: `${BLUE_L}18` }}>
+                        <Users size={16} style={{ color: BLUE_L }} />
+                      </div>
+                      <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: BLUE_L }}>Mais Leads</p>
+                    </div>
+                    <p className="text-sm font-bold text-[#1F2D3D] mb-1 truncate">{CAMPAIGN_LABELS[best.campanha] || best.campanha}</p>
+                    <p className="text-2xl font-extrabold" style={{ color: BLUE_L }}>{best.total_leads}</p>
+                    <p className="text-xs text-[#6B7C93] mt-2">{best.taxa_agendamento.toFixed(0)}% agend. · score {best.score.toFixed(0)}</p>
+                  </div>
+                )
+              })()}
+              {(() => {
+                const worst = [...campanhas]
+                  .filter((c) => c.total_leads >= 3)
+                  .sort((a, b) => (b.desqualificados / Math.max(b.total_leads, 1)) - (a.desqualificados / Math.max(a.total_leads, 1)))[0]
+                if (!worst) return null
+                const taxa = worst.total_leads > 0 ? (worst.desqualificados / worst.total_leads) * 100 : 0
+                return (
+                  <div className="card p-5" style={{ borderTop: `3px solid ${RED}` }}>
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: `${RED}12` }}>
+                        <AlertTriangle size={16} style={{ color: RED }} />
+                      </div>
+                      <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: RED }}>Mais Desqualificados</p>
+                    </div>
+                    <p className="text-sm font-bold text-[#1F2D3D] mb-1 truncate">{CAMPAIGN_LABELS[worst.campanha] || worst.campanha}</p>
+                    <p className="text-2xl font-extrabold" style={{ color: RED }}>{taxa.toFixed(1)}%</p>
+                    <p className="text-xs text-[#6B7C93] mt-2">{worst.desqualificados} desqual. de {worst.total_leads} leads</p>
+                  </div>
+                )
+              })()}
             </div>
 
-            {/* Charts */}
+            {/* ── Tabela de Campanhas (expandível) ─────────────────────── */}
+            <div className="card overflow-hidden">
+              <div className="flex items-center justify-between px-6 py-4" style={{ borderBottom: '1px solid #E0E6ED' }}>
+                <div>
+                  <h3 className="section-title">Todas as Campanhas</h3>
+                  <p className="text-xs text-text-muted mt-0.5">Clique em uma linha para expandir e ver os criativos</p>
+                </div>
+                <button onClick={exportCampanhas} className="btn-secondary flex items-center gap-1.5 text-xs py-1.5 px-3">
+                  <Download size={13} />
+                  Baixar CSV
+                </button>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid #E0E6ED', background: '#F5F7FA' }}>
+                      {([
+                        { label: 'Campanha',    w: 220 },
+                        { label: 'Leads' },
+                        { label: '% Agend.' },
+                        { label: '% Conv.' },
+                        { label: 'Vendas' },
+                        { label: 'Receita' },
+                        { label: 'Ticket Médio' },
+                        { label: 'Score' },
+                        { label: 'Desqual.' },
+                        { label: '% Desqual.' },
+                        { label: 'Recom.' },
+                        { label: '' },
+                      ] as { label: string; w?: number }[]).map(({ label, w }) => (
+                        <th key={label || 'action'} style={{ width: w, padding: '12px 16px', textAlign: 'left' }}>
+                          <span className="text-[10px] font-bold uppercase tracking-widest text-text-muted">{label}</span>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...campanhas].sort((a, b) => b.score - a.score).flatMap((c, idx) => {
+                      const isExpanded = expandedCampanhas.has(c.campanha)
+                      const taxa_desq = c.total_leads > 0 ? (c.desqualificados / c.total_leads) * 100 : 0
+                      const rec = getRecomendacao(c.taxa_conversao, c.ticket_medio, c.taxa_agendamento)
+                      const recCfg = REC_CONFIG[rec]
+                      const RecIcon = recCfg.icon
+                      const color = CHART_PALETTE[idx % CHART_PALETTE.length]
+                      const campCriativos = [...criativos]
+                        .filter((cr) => cr.utm_campaign === c.campanha)
+                        .sort((a, b) => b.score - a.score)
+                      const maxCrScore = Math.max(...campCriativos.map((cr) => cr.score), 1)
+                      const maxDesqTaxa = Math.max(...campanhas.filter((x) => x.total_leads >= 3).map((x) => x.total_leads > 0 ? (x.desqualificados / x.total_leads) * 100 : 0), 0)
+                      const isBestConv = idx === 0
+                      const isMostDesq = c.total_leads >= 3 && taxa_desq > 0 && taxa_desq === maxDesqTaxa
+
+                      const mainRow = (
+                        <tr
+                          key={c.campanha}
+                          onClick={() => toggleCampanha(c.campanha)}
+                          style={{
+                            borderBottom: isExpanded ? 'none' : '1px solid #EEF1F5',
+                            background: isExpanded ? 'rgba(37,99,235,0.05)' : 'transparent',
+                            cursor: 'pointer',
+                            borderLeft: `3px solid ${color}`,
+                          }}
+                          className="hover:bg-elevated transition-colors"
+                        >
+                          <td style={{ padding: '14px 16px', maxWidth: 220 }}>
+                            <div className="flex items-center gap-2 min-w-0">
+                              {isBestConv && <Trophy size={12} style={{ color: GREEN_L, flexShrink: 0 }} />}
+                              {isMostDesq && <AlertTriangle size={12} style={{ color: RED, flexShrink: 0 }} />}
+                              <div className="min-w-0">
+                                <p className="text-xs font-semibold text-text-primary truncate">
+                                  {CAMPAIGN_LABELS[c.campanha] || c.campanha}
+                                </p>
+                                <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+                                  {c.fontes.slice(0, 2).map((f) => (
+                                    <span key={f} className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full capitalize"
+                                      style={{ background: `${SOURCE_COLORS[f] || BLUE}15`, color: SOURCE_COLORS[f] || BLUE }}>
+                                      {f}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                          <td style={{ padding: '14px 16px' }}>
+                            <span className="text-sm font-bold text-text-bright">{c.total_leads}</span>
+                          </td>
+                          <td style={{ padding: '14px 16px' }}>
+                            <PercentBar value={c.taxa_agendamento} color={SKY} />
+                          </td>
+                          <td style={{ padding: '14px 16px' }}>
+                            <span className="text-sm font-bold"
+                              style={{ color: c.taxa_conversao >= 15 ? GREEN_L : c.taxa_conversao >= 5 ? AMBER : RED }}>
+                              {c.taxa_conversao.toFixed(1)}%
+                            </span>
+                          </td>
+                          <td style={{ padding: '14px 16px' }}>
+                            <span className="text-sm font-bold text-text-bright">{c.vendas}</span>
+                          </td>
+                          <td style={{ padding: '14px 16px' }}>
+                            <span className="text-sm font-bold" style={{ color: c.receita_total > 0 ? GREEN_L : '#3d5a7a' }}>
+                              {formatCurrency(c.receita_total)}
+                            </span>
+                          </td>
+                          <td style={{ padding: '14px 16px' }}>
+                            <span className="text-xs font-semibold" style={{ color: c.ticket_medio > 0 ? SKY : '#3d5a7a' }}>
+                              {c.ticket_medio > 0 ? formatCurrency(c.ticket_medio) : '—'}
+                            </span>
+                          </td>
+                          <td style={{ padding: '14px 16px' }}>
+                            <ScoreRing score={c.score} max={maxScoreCamp} />
+                          </td>
+                          <td style={{ padding: '14px 16px' }}>
+                            <span className="text-sm font-bold" style={{ color: c.desqualificados > 0 ? RED : '#3d5a7a' }}>
+                              {c.desqualificados}
+                            </span>
+                          </td>
+                          <td style={{ padding: '14px 16px' }}>
+                            <PercentBar
+                              value={taxa_desq}
+                              color={taxa_desq >= 30 ? RED : taxa_desq >= 15 ? AMBER : GREEN_L}
+                            />
+                          </td>
+                          <td style={{ padding: '14px 16px' }}>
+                            <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg whitespace-nowrap"
+                              style={{ background: recCfg.bg, color: recCfg.color }}>
+                              <RecIcon size={10} />
+                              {recCfg.label}
+                            </span>
+                          </td>
+                          <td style={{ padding: '14px 20px' }}>
+                            <div className="flex items-center justify-center">
+                              {isExpanded
+                                ? <ChevronUp size={14} style={{ color: BLUE_L }} />
+                                : <ChevronDown size={14} style={{ color: '#6B7C93' }} />}
+                            </div>
+                          </td>
+                        </tr>
+                      )
+
+                      if (!isExpanded) return [mainRow]
+
+                      const expandedRow = (
+                        <tr key={`${c.campanha}-criativos`} style={{ borderBottom: '1px solid #EEF1F5' }}>
+                          <td colSpan={12} style={{ padding: 0, background: '#F8FAFF' }}>
+                            <div style={{ borderLeft: `3px solid ${color}30`, marginLeft: 0 }}>
+                              {campCriativos.length === 0 ? (
+                                <div className="px-8 py-4 text-xs text-text-dim italic">
+                                  Nenhum criativo vinculado a esta campanha.
+                                </div>
+                              ) : (
+                                <div className="py-3 px-6">
+                                  <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-2">
+                                    Criativos da campanha · {campCriativos.length} criativo{campCriativos.length !== 1 ? 's' : ''}
+                                  </p>
+                                  <table className="w-full text-sm">
+                                    <thead>
+                                      <tr style={{ background: '#EEF3FA', borderRadius: 8 }}>
+                                        {['Criativo','Leads','% Agend.','% Conv.','Vendas','Receita','Ticket','Score','Desqual.','% Desqual.',''].map((h) => (
+                                          <th key={h || 'act'} style={{ padding: '8px 12px', textAlign: 'left' }}>
+                                            <span className="text-[9px] font-bold uppercase tracking-widest text-text-muted">{h}</span>
+                                          </th>
+                                        ))}
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {campCriativos.map((cr, cIdx) => {
+                                        const crTaxaDesq = cr.total_leads > 0 ? (cr.desqualificados / cr.total_leads) * 100 : 0
+                                        const isCrBest  = cIdx === 0
+                                        const isCrWorst = cIdx === campCriativos.length - 1 && campCriativos.length > 1
+                                        return (
+                                          <tr
+                                            key={cr.utm_content}
+                                            onClick={(e) => { e.stopPropagation(); setSelectedCriativo(cr.utm_content) }}
+                                            style={{
+                                              borderBottom: '1px solid #E4EAF5',
+                                              cursor: 'pointer',
+                                              background: isCrBest ? 'rgba(5,150,105,0.04)' : isCrWorst ? 'rgba(220,38,38,0.03)' : 'transparent',
+                                            }}
+                                            className="hover:bg-elevated transition-colors"
+                                          >
+                                            <td style={{ padding: '10px 12px', maxWidth: 180 }}>
+                                              <div className="flex items-center gap-1.5 min-w-0">
+                                                {isCrBest  && <Trophy        size={10} style={{ color: GREEN_L, flexShrink: 0 }} />}
+                                                {isCrWorst && <AlertTriangle size={10} style={{ color: RED,     flexShrink: 0 }} />}
+                                                <span className="text-xs font-semibold text-text-primary truncate">
+                                                  {CRIATIVO_LABELS[cr.utm_content] || cr.utm_content}
+                                                </span>
+                                              </div>
+                                            </td>
+                                            <td style={{ padding: '10px 12px' }}>
+                                              <span className="text-xs font-bold text-text-bright">{cr.total_leads}</span>
+                                            </td>
+                                            <td style={{ padding: '10px 12px' }}>
+                                              <PercentBar value={cr.taxa_agendamento} color={SKY} />
+                                            </td>
+                                            <td style={{ padding: '10px 12px' }}>
+                                              <span className="text-xs font-bold"
+                                                style={{ color: cr.taxa_conversao >= 15 ? GREEN_L : cr.taxa_conversao >= 5 ? AMBER : RED }}>
+                                                {cr.taxa_conversao.toFixed(1)}%
+                                              </span>
+                                            </td>
+                                            <td style={{ padding: '10px 12px' }}>
+                                              <span className="text-xs font-bold text-text-bright">{cr.vendas}</span>
+                                            </td>
+                                            <td style={{ padding: '10px 12px' }}>
+                                              <span className="text-xs font-bold" style={{ color: cr.receita_total > 0 ? GREEN_L : '#3d5a7a' }}>
+                                                {formatCurrency(cr.receita_total)}
+                                              </span>
+                                            </td>
+                                            <td style={{ padding: '10px 12px' }}>
+                                              <span className="text-[10px] font-semibold" style={{ color: cr.ticket_medio > 0 ? SKY : '#3d5a7a' }}>
+                                                {cr.ticket_medio > 0 ? formatCurrency(cr.ticket_medio) : '—'}
+                                              </span>
+                                            </td>
+                                            <td style={{ padding: '10px 12px' }}>
+                                              <ScoreRing score={cr.score} max={maxCrScore} />
+                                            </td>
+                                            <td style={{ padding: '10px 12px' }}>
+                                              <span className="text-xs font-bold" style={{ color: cr.desqualificados > 0 ? RED : '#3d5a7a' }}>
+                                                {cr.desqualificados}
+                                              </span>
+                                            </td>
+                                            <td style={{ padding: '10px 12px' }}>
+                                              <PercentBar
+                                                value={crTaxaDesq}
+                                                color={crTaxaDesq >= 30 ? RED : crTaxaDesq >= 15 ? AMBER : GREEN_L}
+                                              />
+                                            </td>
+                                            <td style={{ padding: '10px 12px' }}>
+                                              <span className="text-[9px] font-semibold px-2 py-1 rounded-full whitespace-nowrap"
+                                                style={{ background: `${BLUE_L}15`, color: BLUE_L }}>
+                                                Ver detalhes ↗
+                                              </span>
+                                            </td>
+                                          </tr>
+                                        )
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )
+
+                      return [mainRow, expandedRow]
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* ── Charts ────────────────────────────────────────────────── */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <div className="card p-5">
                 <div className="flex items-center justify-between mb-4">
@@ -1106,11 +1399,6 @@ export default function MarketingPage() {
                   <h3 className="section-title">Receita por Fonte de Tráfego</h3>
                   <p className="text-xs text-text-muted mt-0.5">Onde cada real de receita está vindo</p>
                 </div>
-                <button onClick={exportCampanhas}
-                  className="btn-secondary flex items-center gap-1.5 text-xs py-1.5 px-3">
-                  <Download size={13} />
-                  Baixar CSV Campanhas
-                </button>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3">
                 {receitaFonte.map((item, i) => {
@@ -1581,6 +1869,217 @@ export default function MarketingPage() {
                 )
               })}
             </div>
+          </div>
+        )}
+
+        {/* ══════════════════════════════════════════════════════════════════ */}
+        {/* TAB: MAPA DE CALOR                                               */}
+        {/* ══════════════════════════════════════════════════════════════════ */}
+        {tab === 'calor' && (
+          <div className="space-y-5">
+
+            {/* Controles */}
+            <div className="card p-4 flex flex-wrap items-center gap-4">
+              <div className="flex items-center gap-2">
+                <Flame size={15} style={{ color: AMBER }} />
+                <span className="text-sm font-semibold text-text-primary">Métrica:</span>
+              </div>
+              <div className="flex items-center gap-1 rounded-lg p-1" style={{ background: '#EEF1F5', border: '1px solid #E0E6ED' }}>
+                {([
+                  { v: 'leads',        l: 'Leads' },
+                  { v: 'agendamentos', l: 'Agendamentos' },
+                  { v: 'vendas',       l: 'Vendas' },
+                ] as { v: HeatMetric; l: string }[]).map(({ v, l }) => (
+                  <button key={v} onClick={() => setHeatMetric(v)}
+                    className={cn('px-3 py-1.5 rounded-md text-xs font-semibold transition-all',
+                      heatMetric === v ? 'text-white' : 'text-[#6B7C93] hover:text-[#1F2D3D]')}
+                    style={heatMetric === v ? { background: 'linear-gradient(135deg,#2FBF71,#1E8E5A)' } : {}}>
+                    {l}
+                  </button>
+                ))}
+              </div>
+              <div className="ml-auto flex items-center gap-3 text-xs text-text-muted">
+                <span>Horário de pico:</span>
+                <span className="font-bold text-text-primary">{peakHour}h – {peakHour + 1}h</span>
+                <span className="text-text-dim">·</span>
+                <span>Dia de pico:</span>
+                <span className="font-bold text-text-primary">{HEAT_DAYS[peakDay]}</span>
+              </div>
+            </div>
+
+            {/* KPIs de pico */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {HEAT_DAYS.map((day, di) => {
+                const total = heatRowTotals[di]
+                const pct = heatMax > 0 ? (total / Math.max(...heatRowTotals, 1)) * 100 : 0
+                const isPeak = di === peakDay
+                return (
+                  <div key={day} className="card p-3"
+                    style={isPeak ? { borderTop: `3px solid ${GREEN}` } : {}}>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-bold text-text-primary">{day}</span>
+                      {isPeak && (
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
+                          style={{ background: `${GREEN}18`, color: GREEN }}>PICO</span>
+                      )}
+                    </div>
+                    <p className="text-xl font-extrabold" style={{ color: isPeak ? GREEN : BLUE_L }}>{total}</p>
+                    <div className="w-full h-1 rounded-full mt-1.5" style={{ background: '#E0E6ED' }}>
+                      <div className="h-1 rounded-full transition-all"
+                        style={{ width: `${pct}%`, background: isPeak ? GREEN : BLUE_L }} />
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* Grid do mapa de calor */}
+            <div className="card p-5">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="section-title">Distribuição por Dia × Hora</h3>
+                  <p className="text-xs text-text-muted mt-0.5">
+                    Volume de {heatMetric} por dia da semana e horário do dia
+                  </p>
+                </div>
+                {/* Legenda de escala */}
+                <div className="hidden md:flex items-center gap-2 text-xs text-text-muted">
+                  <span>Baixo</span>
+                  {['#D1FAE5','#6EE7B7','#2FBF71','#1E8E5A','#14532D'].map((c) => (
+                    <div key={c} className="w-5 h-4 rounded" style={{ background: c }} />
+                  ))}
+                  <span>Alto</span>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <div style={{ minWidth: '700px' }}>
+                  {/* Cabeçalho das horas */}
+                  <div className="flex items-center mb-1">
+                    <div style={{ width: '44px', flexShrink: 0 }} />
+                    {HEAT_HOURS.map((h) => (
+                      <div key={h} className="flex-1 text-center"
+                        style={{ minWidth: '28px' }}>
+                        {h % 3 === 0 && (
+                          <span className="text-[9px] font-semibold text-text-dim">{h}h</span>
+                        )}
+                      </div>
+                    ))}
+                    <div style={{ width: '40px', flexShrink: 0 }} />
+                  </div>
+
+                  {/* Linhas por dia */}
+                  {HEAT_DAYS.map((day, di) => (
+                    <div key={day} className="flex items-center mb-0.5">
+                      {/* Label do dia */}
+                      <div className="text-xs font-semibold text-text-muted text-right pr-2 flex-shrink-0"
+                        style={{ width: '44px' }}>
+                        {day}
+                      </div>
+
+                      {/* Células */}
+                      {HEAT_HOURS.map((h) => {
+                        const val = heatMatrix[di][h]
+                        const bg  = heatColor(val, heatMax)
+                        const fg  = heatTextColor(val, heatMax)
+                        return (
+                          <div key={h} title={`${day} ${h}h: ${val}`}
+                            className="flex-1 rounded flex items-center justify-center text-[9px] font-bold transition-transform hover:scale-110 cursor-default"
+                            style={{
+                              minWidth: '28px', height: '28px',
+                              background: bg, color: fg,
+                              margin: '1px',
+                            }}>
+                            {val > 0 ? val : ''}
+                          </div>
+                        )
+                      })}
+
+                      {/* Total da linha */}
+                      <div className="text-xs font-bold text-text-muted text-right pl-2 flex-shrink-0"
+                        style={{ width: '40px', color: di === peakDay ? GREEN : undefined }}>
+                        {heatRowTotals[di]}
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* Totais por hora (rodapé) */}
+                  <div className="flex items-center mt-1 pt-1" style={{ borderTop: '1px solid #E0E6ED' }}>
+                    <div className="text-[9px] font-bold text-text-dim text-right pr-2 flex-shrink-0"
+                      style={{ width: '44px' }}>TOT</div>
+                    {HEAT_HOURS.map((h) => {
+                      const total = heatColTotals[h]
+                      return (
+                        <div key={h} className="flex-1 text-center"
+                          style={{
+                            minWidth: '28px',
+                            fontSize: '9px',
+                            fontWeight: 700,
+                            color: h === peakHour ? GREEN : '#A0AEC0',
+                            margin: '1px',
+                          }}>
+                          {total > 0 ? total : ''}
+                        </div>
+                      )
+                    })}
+                    <div style={{ width: '40px', flexShrink: 0 }} />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Barras por hora (top horas) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              <div className="card p-5">
+                <h3 className="section-title mb-4">Top Horários</h3>
+                <div className="space-y-2">
+                  {[...HEAT_HOURS]
+                    .sort((a, b) => heatColTotals[b] - heatColTotals[a])
+                    .slice(0, 8)
+                    .map((h, i) => {
+                      const val = heatColTotals[h]
+                      const pct = heatMax > 0 ? (val / Math.max(...heatColTotals, 1)) * 100 : 0
+                      return (
+                        <div key={h} className="flex items-center gap-3">
+                          <span className="text-[10px] font-black text-text-dim w-4 text-right">{i + 1}</span>
+                          <span className="text-xs font-semibold text-text-primary w-12">{h}h – {h + 1}h</span>
+                          <div className="flex-1 h-2 rounded-full" style={{ background: '#E0E6ED' }}>
+                            <div className="h-2 rounded-full transition-all"
+                              style={{ width: `${pct}%`, background: i === 0 ? GREEN : BLUE_L }} />
+                          </div>
+                          <span className="text-xs font-bold w-6 text-right"
+                            style={{ color: i === 0 ? GREEN : BLUE_L }}>{val}</span>
+                        </div>
+                      )
+                    })}
+                </div>
+              </div>
+
+              <div className="card p-5">
+                <h3 className="section-title mb-4">Top Dias da Semana</h3>
+                <div className="space-y-2">
+                  {[...HEAT_DAYS.map((d, i) => ({ d, total: heatRowTotals[i], i }))]
+                    .sort((a, b) => b.total - a.total)
+                    .map(({ d, total, i }, rank) => {
+                      const pct = Math.max(...heatRowTotals, 1) > 0
+                        ? (total / Math.max(...heatRowTotals, 1)) * 100 : 0
+                      return (
+                        <div key={d} className="flex items-center gap-3">
+                          <span className="text-[10px] font-black text-text-dim w-4 text-right">{rank + 1}</span>
+                          <span className="text-xs font-semibold text-text-primary w-8">{d}</span>
+                          <div className="flex-1 h-2 rounded-full" style={{ background: '#E0E6ED' }}>
+                            <div className="h-2 rounded-full transition-all"
+                              style={{ width: `${pct}%`, background: rank === 0 ? GREEN : AMBER }} />
+                          </div>
+                          <span className="text-xs font-bold w-6 text-right"
+                            style={{ color: rank === 0 ? GREEN : AMBER }}>{total}</span>
+                        </div>
+                      )
+                    })}
+                </div>
+              </div>
+            </div>
+
           </div>
         )}
 
